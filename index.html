@@ -4,6 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Ficha Anestésica Unimed-Rio - Preenchimento Automático</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0a8a4e">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Ficha Anestesia">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
 <script>
 !function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"function"==typeof define&&define.amd?define(["exports"],e):e((t=t||self).PDFLib={})}(this,(function(t){"use strict";
 /*! *****************************************************************************
@@ -1088,6 +1096,13 @@ async function generatePdf() {
     console.error(err);
     st.className = 'status err show'; st.textContent = 'Erro ao gerar PDF: ' + err.message;
   }
+}
+
+// ---------- PWA: registra o service worker (permite instalar como app) ----------
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('service-worker.js').catch((e) => console.warn('SW não registrado', e));
+  });
 }
 
 // ---------- Estado inicial ----------
