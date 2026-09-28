@@ -73,7 +73,19 @@
 
 <div class="card">
   <h2>Fichas salvas</h2>
-  <div class="hint" style="margin:0 0 8px;">Tudo é salvo automaticamente enquanto você preenche. Toque numa ficha para reabrir e editar.</div>
+  <div class="hint" style="margin:0 0 8px;">Tudo é salvo automaticamente neste aparelho enquanto você preenche e enviado ao Google Drive quando houver conexão. Toque numa ficha para reabrir e editar.</div>
+  <div style="margin:0 0 10px;padding:8px 10px;border:1px solid #ddd;border-radius:8px;font-size:0.88rem;">
+    <div style="display:flex;align-items:center;gap:8px;">
+      <span id="syncStatus" style="flex:1;">…</span>
+      <button type="button" class="btn secondary" style="width:auto;margin:0;padding:6px 12px;font-size:0.85rem;" onclick="sincronizar(true)">Sincronizar</button>
+    </div>
+    <details id="syncCfgBox" style="margin-top:6px;">
+      <summary style="cursor:pointer;color:#555;">Configurar Google Drive</summary>
+      <div class="row" style="margin-top:8px;"><label>URL do Script 4 (termina em /exec)</label><input type="text" id="sync_url" placeholder="https://script.google.com/macros/s/.../exec"></div>
+      <div class="row"><label>Token</label><input type="password" id="sync_token"></div>
+      <button type="button" class="btn secondary" style="margin-top:0;" onclick="salvarCfgDrive()">Salvar e testar</button>
+    </details>
+  </div>
   <div id="fichasStatus" class="status"></div>
   <div id="fichasLista"></div>
   <button type="button" class="btn secondary" onclick="novaFicha()">+ Nova ficha em branco</button>
@@ -280,7 +292,15 @@
   </div>
 </div>
 
+<div class="row" style="margin:12px 0 4px;">
+  <label class="check-item"><input type="checkbox" id="f_carimbo" checked> Carimbar e assinar as 3 páginas</label>
+</div>
 <button class="btn" onclick="generatePdf()">Gerar PDF preenchido</button>
+<div id="shareBar" style="display:none;position:fixed;left:12px;right:12px;bottom:12px;z-index:50;background:#1f5479;color:#fff;border-radius:10px;padding:10px 12px;box-shadow:0 4px 14px rgba(0,0,0,0.25);align-items:center;gap:10px;">
+  <span id="shareBarTxt" style="flex:1;font-size:0.9rem;"></span>
+  <button type="button" onclick="compartilharUltimo()" style="background:#fff;color:#1f5479;border:none;border-radius:8px;padding:10px 14px;font-weight:bold;font-size:0.95rem;">📤 Compartilhar</button>
+  <button type="button" onclick="fecharShareBar()" style="background:none;border:none;color:#fff;font-size:1.2rem;padding:4px 6px;">✕</button>
+</div>
 <div id="genStatus" class="status"></div>
 
 <script>
@@ -292,6 +312,15 @@ const TEMPLATE_B64 = "JVBERi0xLjcKJYGBgYEKCjUgMCBvYmoKPDwKL0ZpbHRlciAvRmxhdGVEZW
 // e as anotações coloridas do template são removidos antes.
 
 const CIRURGIAO = 'Luis Gustavo Périssé';
+
+// ---- Carimbo + assinatura (PNG com fundo transparente) ----
+// x, y = canto inferior esquerdo; w = largura (altura proporcional). Coordenadas em pt.
+const CARIMBO = {
+  p1: { x: 413, y: 590.6, w: 140 },  // texto no espaço livre à direita, acima de "Proteção ocular"
+  p2: { x: 413, y: 40.6,  w: 140 },  // metade direita da caixa Anotações
+  p3: { x: 239, y: 83.5,  w: 140 },  // sobre a linha "Assinatura e carimbo"
+};
+const CARIMBO_B64 = "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";
 
 // ---- Página 1 ----
 const P1_TXT = {
@@ -496,7 +525,7 @@ async function montarPdf(d, templateBytes, L) {
     while (linhas.length && !linhas[0].trim()) linhas.shift();
     while (linhas.length && !linhas[linhas.length - 1].trim()) linhas.pop();
     if (!linhas.length) return;
-    const A = P2.anot;
+    const A = d.carimbo ? { ...P2.anot, right: CARIMBO.p2.x - 6 } : P2.anot;
     let porCol = A.maxLinhasCol, lineH = A.lineH, size = A.size;
     let nCols = Math.ceil(linhas.length / porCol);
     if (nCols > 3) {
@@ -584,6 +613,14 @@ async function montarPdf(d, templateBytes, L) {
   centrado(p3, a.fr, V.fr, P3.vit_y, 9);
   centrado(p3, a.spo2, V.spo2, P3.vit_y, 9);
   centrado(p3, a.temp, V.temp, P3.vit_y, 9);
+
+  // ================= Carimbo nas 3 páginas =================
+  if (d.carimbo) {
+    const img = await pdfDoc.embedPng(base64ToBytes(CARIMBO_B64));
+    [[p1, CARIMBO.p1], [p2, CARIMBO.p2], [p3, CARIMBO.p3]].forEach(([pg, c]) => {
+      pg.drawImage(img, { x: c.x, y: c.y, width: c.w, height: c.w * img.height / img.width });
+    });
+  }
 
   return await pdfDoc.save();
 }
@@ -752,15 +789,30 @@ async function buscarAgenda() {
   if (!data) { statusAgenda('err', 'Escolha a data.'); return; }
   statusAgenda('', 'Buscando agenda...');
   try {
-    if (!agendaToken()) { $('tokenRow').style.display = ''; statusAgenda('warn', 'Digite a senha da agenda (só na primeira vez).'); return; }
-    const r = await fetch(`${AGENDA_URL}?token=${encodeURIComponent(agendaToken())}&date=${data}`);
-    const json = JSON.parse(await r.text());
+    const salva = lerAgendaCache()[data];
+    if (!agendaToken() && !salva) { $('tokenRow').style.display = ''; statusAgenda('warn', 'Digite a senha da agenda (só na primeira vez).'); return; }
+    let json;
+    try {
+      if (!navigator.onLine) throw new Error('sem conexão');
+      if (!agendaToken()) throw new Error('senha da agenda não salva');
+      const r = await fetchComTimeout(`${AGENDA_URL}?token=${encodeURIComponent(agendaToken())}&date=${data}`, {}, 10000);
+      json = JSON.parse(await r.text());
+      guardarAgenda(data, json);
+    } catch (e) {
+      if (!salva) throw e;
+      json = salva.json;
+      agendaEventos = processarEventos(json);
+      renderAgenda();
+      const t = new Date(salva.ts);
+      statusAgenda('warn', `Sem conexão: usando a agenda salva em ${t.toLocaleDateString('pt-BR')} às ${t.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}. ${agendaEventos.length} procedimento(s).`);
+      return;
+    }
     agendaEventos = processarEventos(json);
     renderAgenda();
-    statusAgenda('ok', `${agendaEventos.length} procedimento(s) em ${data.split('-').reverse().join('/')}. Toque no paciente.`);
+    statusAgenda('ok', `${agendaEventos.length} procedimento(s) em ${data.split('-').reverse().join('/')}. Toque no paciente. Agenda guardada para uso sem internet.`);
   } catch (e) {
     console.error(e);
-    statusAgenda('err', 'Não consegui buscar a agenda (' + e.message + '). Use "Colar o JSON da agenda manualmente".');
+    statusAgenda('err', 'Não consegui buscar a agenda (' + e.message + ') e não há cópia salva desta data. Use "Colar o JSON da agenda manualmente".');
   }
 }
 function carregarAgendaColada() {
@@ -901,7 +953,7 @@ function salvarHist(tipo) {
 
 // ---------- Fichas salvas (rascunhos) ----------
 const K_FICHAS = 'unimed_fichas_v1', K_ATUAL = 'unimed_ficha_atual';
-const NAO_SALVAR = ['mementoText', 'agendaJson', 'f_agenda_data', 'f_novo_cristaloide', 'f_agenda_token'];
+const NAO_SALVAR = ['mementoText', 'agendaJson', 'f_agenda_data', 'f_novo_cristaloide', 'f_agenda_token', 'sync_url', 'sync_token'];
 let fichaId = null, restaurando = false, timerSalvar = null;
 function storageOk() { try { localStorage.setItem('__t', '1'); localStorage.removeItem('__t'); return true; } catch (e) { return false; } }
 function lerFichas() { try { return JSON.parse(localStorage.getItem(K_FICHAS) || '{}') || {}; } catch (e) { return {}; } }
@@ -940,6 +992,8 @@ function salvarFichaAtual(extra = {}) {
   const f = lerFichas(), antiga = f[fichaId] || {};
   f[fichaId] = Object.assign(antiga, snap, extra, { id: fichaId, atualizado: Date.now() });
   gravarFichas(f);
+  marcarPendente(fichaId, f[fichaId].atualizado);
+  if (!('pdf' in extra) && !('rand' in extra) && ultimoPdf) { ultimoPdf = null; fecharShareBar(); } // ficha alterada: PDF em memória desatualizado
   try { localStorage.setItem(K_ATUAL, fichaId); } catch (e) {}
   renderFichas();
 }
@@ -951,11 +1005,17 @@ function renderFichas() {
   div.innerHTML = lista.map(fi => {
     const c = fi.campos || {}, data = (c.f_data || '').split('-').reverse().join('/');
     const atual = fi.id === fichaId;
+    const pendente = !!lerPend().fichas[fi.id];
+    const nuvem = !driveConfigurado() ? '' : pendente
+      ? ' <span style="color:#8a5a00;font-size:0.78rem;">⏳ pendente</span>'
+      : ' <span style="color:#1e6b34;font-size:0.78rem;">☁️ no Drive</span>';
+    const linkPdf = fi.pdfUrl ? ` · <a href="${fi.pdfUrl}" target="_blank" rel="noopener" onclick="event.stopPropagation()">abrir PDF</a>` : '';
     return `<div style="display:flex;gap:6px;align-items:center;border:1px solid ${atual ? '#2c6e9b' : '#ddd'};background:${atual ? '#eaf3fa' : '#fff'};border-radius:8px;padding:8px;margin-bottom:6px;">
       <div style="flex:1;cursor:pointer;" onclick="abrirFicha('${fi.id}')">
-        <b>${c.f_nome || '(sem nome)'}</b>${fi.pdf ? ' <span style="color:#1e6b34;font-size:0.8rem;">✓ PDF gerado</span>' : ''}<br>
-        <span style="color:#555;font-size:0.85rem;">${[data, c.f_cirurgia].filter(Boolean).join(' · ')}${atual ? ' · <b>aberta</b>' : ''}</span>
+        <b>${c.f_nome || '(sem nome)'}</b>${fi.pdf ? ' <span style="color:#1e6b34;font-size:0.8rem;">✓ PDF</span>' : ''}${nuvem}<br>
+        <span style="color:#555;font-size:0.85rem;">${[data, c.f_cirurgia].filter(Boolean).join(' · ')}${atual ? ' · <b>aberta</b>' : ''}${linkPdf}</span>
       </div>
+      ${fi.pdf ? `<button type="button" onclick="compartilharFicha('${fi.id}')" title="Compartilhar PDF" style="border:none;background:none;font-size:1.15rem;padding:6px;">📤</button>` : ''}
       <button type="button" onclick="excluirFicha('${fi.id}')" style="border:none;background:none;color:#a41c1c;font-size:1.1rem;padding:6px;">✕</button>
     </div>`;
   }).join('');
@@ -965,7 +1025,7 @@ function estadoInicial() {
   document.querySelectorAll('input[type=text], input[type=time], input[type=number], textarea').forEach(el => { if (!NAO_SALVAR.includes(el.id)) el.value = ''; });
   document.querySelector('input[name="carater"][value="eletiva"]').checked = true;
   document.querySelector('input[name="decubito"][value="dle"]').checked = true;
-  $('f_grafico_ativo').checked = true; $('f_sem_evento').checked = true;
+  $('f_grafico_ativo').checked = true; $('f_sem_evento').checked = true; $('f_carimbo').checked = true;
   $('f_pa_perfil').value = 'normotenso'; $('f_tecnica_base').value = 'geral';
   $('f_data').value = hojeISO();
   cristaloides = []; renderCristaloides();
@@ -973,7 +1033,7 @@ function estadoInicial() {
   ultimoCPRE = false;
   restaurando = false;
 }
-function novaFicha() { salvarFichaAtual(); fichaId = null; try { localStorage.removeItem(K_ATUAL); } catch (e) {} estadoInicial(); renderFichas(); window.scrollTo(0, 0); }
+function novaFicha() { salvarFichaAtual(); fichaId = null; ultimoPdf = null; fecharShareBar(); try { localStorage.removeItem(K_ATUAL); } catch (e) {} estadoInicial(); renderFichas(); window.scrollTo(0, 0); }
 function abrirFicha(id) {
   salvarFichaAtual();
   const fi = lerFichas()[id]; if (!fi) return;
@@ -984,6 +1044,9 @@ function excluirFicha(id) {
   const fi = lerFichas()[id];
   if (!confirm(`Excluir a ficha de ${fi?.campos?.f_nome || '(sem nome)'}?`)) return;
   const f = lerFichas(); delete f[id]; gravarFichas(f);
+  const p = lerPend(); delete p.fichas[id]; if (driveConfigurado()) p.del[id] = Date.now(); gravarPend(p);
+  filaPdfRemover(id).catch(() => {});
+  agendarSync(1000);
   if (id === fichaId) { fichaId = null; try { localStorage.removeItem(K_ATUAL); } catch (e) {} estadoInicial(); }
   renderFichas();
 }
@@ -992,8 +1055,8 @@ function fichaExistente(nome, data) {
   return Object.values(lerFichas()).find(fi => normalize(fi.campos?.f_nome) === n && fi.campos?.f_data === data);
 }
 function limparFichasAntigas() {
-  const f = lerFichas(), lim = Date.now() - 45 * 864e5; let mudou = false;
-  Object.keys(f).forEach(k => { if (f[k].atualizado < lim) { delete f[k]; mudou = true; } });
+  const f = lerFichas(), lim = Date.now() - DIAS_LOCAL * 864e5, pend = lerPend(); let mudou = false;
+  Object.keys(f).forEach(k => { if (f[k].atualizado < lim && !pend.fichas[k]) { delete f[k]; mudou = true; } });
   if (mudou) gravarFichas(f);
 }
 
@@ -1058,9 +1121,200 @@ function coletarDados() {
     gases: { o2: $('f_agente_o2').checked, ar: $('f_agente_ar').checked, sevo: $('f_agente_sevo').checked, remi: $('f_agente_remi').checked },
     rand,
     sem_evento: $('f_sem_evento').checked,
+    carimbo: $('f_carimbo').checked,
     alta: { pa_s: v('f_pa_sist_alta'), pa_d: v('f_pa_diast_alta'), fc: v('f_fc_alta'), fr: v('f_fr_alta'), spo2: v('f_spo2_alta'), temp: v('f_temp_alta') },
   };
 }
+
+// ---------- Google Drive: sincronização com fila offline ----------
+const K_SYNC = 'unimed_sync_cfg', K_PEND = 'unimed_sync_pend', K_PULL = 'unimed_sync_pull';
+const K_AGENDA = 'unimed_agenda_cache', DIAS_LOCAL = 45;
+let sincronizando = false, timerSync = null, pdfsNaFila = 0, ultimaSync = 0, erroSync = '';
+
+function lerCfg() { try { return JSON.parse(localStorage.getItem(K_SYNC) || '{}') || {}; } catch (e) { return {}; } }
+function driveConfigurado() { const c = lerCfg(); return !!(c.url && c.token); }
+function lerPend() {
+  try { const p = JSON.parse(localStorage.getItem(K_PEND) || '{}') || {}; return { fichas: p.fichas || {}, del: p.del || {} }; }
+  catch (e) { return { fichas: {}, del: {} }; }
+}
+function gravarPend(p) { try { localStorage.setItem(K_PEND, JSON.stringify(p)); } catch (e) { console.warn(e); } }
+function marcarPendente(id, atualizado) {
+  if (!driveConfigurado()) return;
+  const p = lerPend(); p.fichas[id] = atualizado; gravarPend(p);
+  agendarSync(5000);
+}
+
+// Fila de PDFs no IndexedDB (cabe muito mais que o localStorage)
+function idb() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open('unimed_fila', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('pdfs', { keyPath: 'id' });
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  });
+}
+async function idbOp(modo, fn) {
+  const db = await idb();
+  return new Promise((res, rej) => {
+    const tx = db.transaction('pdfs', modo), req = fn(tx.objectStore('pdfs'));
+    tx.oncomplete = () => res(req ? req.result : undefined); tx.onerror = () => rej(tx.error);
+  });
+}
+async function filaPdfPut(item) { await idbOp('readwrite', st => st.put(item)); await contarFila(); }
+async function filaPdfRemover(id, criado) {
+  if (criado !== undefined) { const at = await idbOp('readonly', st => st.get(id)); if (!at || at.criado !== criado) return; }
+  await idbOp('readwrite', st => st.delete(id)); await contarFila();
+}
+async function filaPdfTodos() { try { return (await idbOp('readonly', st => st.getAll())) || []; } catch (e) { return []; } }
+async function contarFila() { pdfsNaFila = (await filaPdfTodos()).length; renderSync(); }
+
+async function fetchComTimeout(url, opts = {}, ms = 15000) {
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), ms);
+  try { return await fetch(url, Object.assign({}, opts, { signal: ctl.signal })); }
+  catch (e) { throw new Error(e.name === 'AbortError' ? 'tempo esgotado' : e.message); }
+  finally { clearTimeout(t); }
+}
+async function apiDrive(corpo, ms = 25000) {
+  const c = lerCfg();
+  if (!c.url || !c.token) throw new Error('Drive não configurado');
+  // Corpo em texto puro: evita a pré-verificação CORS que o Apps Script não aceita
+  const r = await fetchComTimeout(c.url, { method: 'POST', body: JSON.stringify(Object.assign({}, corpo, { token: c.token })) }, ms);
+  let j; try { j = JSON.parse(await r.text()); } catch (e) { throw new Error('resposta inválida do script (confira a URL)'); }
+  if (!j.ok) throw new Error(j.erro || 'erro no script');
+  return j;
+}
+function bytesParaB64(bytes) {
+  return new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onload = () => res(String(fr.result).split(',')[1]); fr.onerror = () => rej(fr.error);
+    fr.readAsDataURL(new Blob([bytes], { type: 'application/pdf' }));
+  });
+}
+async function enviarPdf(item, ms = 120000) {
+  const r = await apiDrive({ action: 'pdf', id: item.id, data: item.data, arquivo: item.arquivo, atualizado: item.criado, base64: await bytesParaB64(item.bytes) }, ms);
+  await filaPdfRemover(item.id, item.criado);
+  if (r.url) { const f = lerFichas(); if (f[item.id]) { f[item.id].pdfUrl = r.url; gravarFichas(f); renderFichas(); } }
+  return r;
+}
+
+function agendarSync(ms = 5000) { clearTimeout(timerSync); timerSync = setTimeout(() => sincronizar(), ms); }
+function totalPendente() { const p = lerPend(); return Object.keys(p.fichas).length + Object.keys(p.del).length + pdfsNaFila; }
+
+async function sincronizar(manual) {
+  if (sincronizando) return;
+  if (!driveConfigurado()) { if (manual) $('syncCfgBox').open = true; renderSync(); return; }
+  if (!navigator.onLine) { renderSync(); return; }
+  sincronizando = true; erroSync = ''; renderSync();
+  try {
+    // 1. Fichas alteradas
+    const pend = lerPend(), f = lerFichas();
+    const enviar = Object.keys(pend.fichas).filter(id => f[id]).map(id => ({
+      id, atualizado: f[id].atualizado,
+      dados: { campos: f[id].campos, cristaloides: f[id].cristaloides, pdf: f[id].pdf || null, rand: f[id].rand || null },
+    }));
+    if (enviar.length) await apiDrive({ action: 'save', fichas: enviar });
+    const p1 = lerPend();
+    Object.keys(pend.fichas).forEach(id => {
+      const enviada = enviar.find(e => e.id === id);
+      if (!enviada || p1.fichas[id] === enviada.atualizado) delete p1.fichas[id]; // editada durante o envio: continua pendente
+    });
+    gravarPend(p1);
+
+    // 2. Exclusões
+    const dels = Object.entries(p1.del).map(([id, atualizado]) => ({ id, atualizado }));
+    if (dels.length) {
+      await apiDrive({ action: 'delete', itens: dels });
+      const p2 = lerPend(); dels.forEach(d => delete p2.del[d.id]); gravarPend(p2);
+    }
+
+    // 3. PDFs na fila
+    for (const item of await filaPdfTodos()) {
+      if (!lerFichas()[item.id]) { await filaPdfRemover(item.id); continue; }
+      await enviarPdf(item);
+    }
+
+    // 4. Traz o que mudou no Drive (outros aparelhos)
+    const r = await apiDrive({ action: 'pull', since: Number(localStorage.getItem(K_PULL) || 0) }, 40000);
+    mesclarDoDrive(r.fichas || []);
+    try { localStorage.setItem(K_PULL, String(r.serverTime)); } catch (e) {}
+    ultimaSync = Date.now();
+  } catch (e) {
+    console.warn(e); erroSync = e.message;
+  } finally {
+    sincronizando = false; renderSync(); renderFichas();
+  }
+}
+
+function mesclarDoDrive(remotas) {
+  const f = lerFichas(), pend = lerPend(), lim = Date.now() - DIAS_LOCAL * 864e5;
+  let abertaMudou = false, abertaExcluida = false;
+  remotas.forEach(rf => {
+    const loc = f[rf.id];
+    if (rf.excluida) {
+      if (loc && !pend.fichas[rf.id] && loc.atualizado <= rf.atualizado) {
+        delete f[rf.id]; if (rf.id === fichaId) abertaExcluida = true;
+      }
+      return;
+    }
+    if (pend.del[rf.id] || !rf.dados) return;
+    if (!loc) {
+      if (rf.atualizado < lim) return; // fichas antigas ficam só no Drive
+      f[rf.id] = Object.assign({}, rf.dados, { id: rf.id, atualizado: rf.atualizado, pdfUrl: rf.pdf_url || '' });
+    } else if (rf.atualizado > loc.atualizado && !pend.fichas[rf.id]) {
+      f[rf.id] = Object.assign({}, rf.dados, { id: rf.id, atualizado: rf.atualizado, pdfUrl: rf.pdf_url || loc.pdfUrl || '' });
+      if (rf.id === fichaId) abertaMudou = true;
+    } else if (rf.pdf_url) {
+      loc.pdfUrl = rf.pdf_url;
+    }
+  });
+  gravarFichas(f);
+  if (abertaExcluida) { fichaId = null; try { localStorage.removeItem(K_ATUAL); } catch (e) {} estadoInicial(); }
+  else if (abertaMudou) aplicarSnapshot(f[fichaId]);
+}
+
+function renderSync() {
+  const el = $('syncStatus'); if (!el) return;
+  const n = totalPendente(), hora = t => new Date(t).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  if (!driveConfigurado()) el.innerHTML = '⚪ Google Drive não configurado: fichas só neste aparelho.';
+  else if (sincronizando) el.innerHTML = '🔄 Sincronizando com o Drive...';
+  else if (!navigator.onLine) el.innerHTML = `🟠 Sem conexão${n ? ` · ${n} pendente(s)` : ''}. Envio automático quando a conexão voltar.`;
+  else if (erroSync) el.innerHTML = `🔴 Falha ao sincronizar (${erroSync})${n ? ` · ${n} pendente(s)` : ''}. Nova tentativa automática.`;
+  else if (n) el.innerHTML = `⏳ ${n} pendente(s) para enviar ao Drive.`;
+  else el.innerHTML = `🟢 Tudo salvo no Google Drive${ultimaSync ? ` · ${hora(ultimaSync)}` : ''}.`;
+}
+
+async function salvarCfgDrive() {
+  const url = $('sync_url').value.trim(), token = $('sync_token').value.trim();
+  if (!/^https:\/\/script\.google\.com\/.+\/exec$/.test(url)) { alert('A URL deve começar com https://script.google.com/ e terminar em /exec'); return; }
+  if (!token) { alert('Digite o token.'); return; }
+  const anterior = localStorage.getItem(K_SYNC);
+  try { localStorage.setItem(K_SYNC, JSON.stringify({ url, token })); } catch (e) {}
+  $('syncStatus').innerHTML = '🔄 Testando conexão...';
+  try {
+    await apiDrive({ action: 'ping' }, 20000);
+  } catch (e) {
+    if (anterior) localStorage.setItem(K_SYNC, anterior); else localStorage.removeItem(K_SYNC);
+    renderSync(); alert('Não funcionou: ' + e.message); return;
+  }
+  // Primeira configuração: envia todas as fichas que já existem neste aparelho
+  const p = lerPend(), f = lerFichas();
+  Object.values(f).forEach(fi => { if (!p.fichas[fi.id]) p.fichas[fi.id] = fi.atualizado; });
+  gravarPend(p);
+  $('sync_token').value = ''; $('syncCfgBox').open = false;
+  sincronizar(true);
+}
+
+// Agenda guardada para uso sem internet (últimas 10 datas)
+function lerAgendaCache() { try { return JSON.parse(localStorage.getItem(K_AGENDA) || '{}') || {}; } catch (e) { return {}; } }
+function guardarAgenda(data, json) {
+  const c = lerAgendaCache(); c[data] = { json, ts: Date.now() };
+  Object.keys(c).sort((a, b) => c[b].ts - c[a].ts).slice(10).forEach(k => delete c[k]);
+  try { localStorage.setItem(K_AGENDA, JSON.stringify(c)); } catch (e) {}
+}
+
+window.addEventListener('online', () => { renderSync(); agendarSync(1000); });
+window.addEventListener('offline', renderSync);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') agendarSync(800); });
+setInterval(() => { if (driveConfigurado() && totalPendente() && navigator.onLine) sincronizar(); }, 60000);
 
 // ---------- Salvar ----------
 async function salvarArquivo(blob, nome) {
@@ -1079,19 +1333,100 @@ function base64ToBytes(b64) {
   return bytes;
 }
 
+// ---------- Compartilhar (menu do Android: WhatsApp, e-mail...) ----------
+let ultimoPdf = null; // { id, arquivo, bytes } — último PDF montado nesta sessão
+
+function nomeArquivo(d) {
+  const nomeArq = normalize(d.nome || 'ficha').replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+  return `ficha_unimed_${nomeArq}_${d.data || hojeISO()}.pdf`;
+}
+// Dados do formulário + mesmos valores sorteados de SpO2/EtCO2 da ficha, se já existirem
+function dadosParaPdf() {
+  const d = coletarDados();
+  const fi = fichaId && lerFichas()[fichaId];
+  if (fi && fi.rand && fi.rand.spo2 && fi.rand.etco2) d.rand = fi.rand;
+  return d;
+}
+async function compartilharPdf(bytes, arquivo) {
+  const file = new File([bytes], arquivo, { type: 'application/pdf' });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file] }); fecharShareBar(); }
+    catch (e) {
+      if (e.name === 'AbortError') return; // cancelado pelo usuário
+      if (e.name === 'NotAllowedError') { mostrarShareBar(arquivo); return; } // perdeu o "toque": pede outro
+      alert('Não foi possível compartilhar: ' + e.message);
+    }
+  } else {
+    await salvarArquivo(new Blob([bytes], { type: 'application/pdf' }), arquivo);
+    alert('Este navegador não permite compartilhar arquivos. O PDF foi baixado; envie pelo WhatsApp a partir da pasta de downloads.');
+  }
+}
+function compartilharUltimo() {
+  if (!ultimoPdf) { alert('A ficha foi alterada depois do PDF. Gere o PDF de novo para compartilhar a versão atual.'); return; }
+  compartilharPdf(ultimoPdf.bytes, ultimoPdf.arquivo);
+}
+function mostrarShareBar(arquivo) {
+  $('shareBarTxt').textContent = 'PDF pronto: ' + arquivo.replace(/^ficha_unimed_/, '').replace(/\.pdf$/, '').replace(/_/g, ' ');
+  $('shareBar').style.display = 'flex';
+}
+function fecharShareBar() { $('shareBar').style.display = 'none'; }
+async function compartilharFicha(id) {
+  if (ultimoPdf && ultimoPdf.id === id) { compartilharPdf(ultimoPdf.bytes, ultimoPdf.arquivo); return; }
+  // Remonta o PDF desta ficha (mesmos dados e valores sorteados) e pede um toque para abrir o menu
+  if (id !== fichaId) abrirFicha(id);
+  const st = $('fichasStatus');
+  st.className = 'status show'; st.textContent = 'Preparando o PDF...';
+  try {
+    const d = dadosParaPdf();
+    const bytes = await montarPdf(d, base64ToBytes(TEMPLATE_B64), PDFLib);
+    const fi = lerFichas()[id];
+    if (fi && !fi.rand) salvarFichaAtual({ rand: d.rand });
+    ultimoPdf = { id, arquivo: nomeArquivo(d), bytes };
+    st.className = 'status'; st.textContent = '';
+    mostrarShareBar(ultimoPdf.arquivo);
+  } catch (e) {
+    console.error(e);
+    st.className = 'status err show'; st.textContent = 'Erro ao montar o PDF: ' + e.message;
+  }
+}
+
 async function generatePdf() {
   const st = $('genStatus');
   st.className = 'status show'; st.textContent = 'Gerando PDF...';
   try {
-    const d = coletarDados();
+    const d = dadosParaPdf();
     const bytes = await montarPdf(d, base64ToBytes(TEMPLATE_B64), PDFLib);
     salvarHist('diag'); salvarHist('cir'); salvarParProcDiag();
-    salvarFichaAtual({ pdf: Date.now() });
-    const nomeArq = normalize(d.nome || 'ficha').replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
-    await salvarArquivo(new Blob([bytes], { type: 'application/pdf' }), `ficha_unimed_${nomeArq}.pdf`);
+    salvarFichaAtual({ pdf: Date.now(), rand: d.rand });
+    const arquivo = nomeArquivo(d);
+    ultimoPdf = { id: fichaId, arquivo, bytes };
+    const blob = new Blob([bytes], { type: 'application/pdf' });
     const semHorario = d.grafico && numColunas(d) === 0;
-    st.className = 'status ' + (semHorario ? 'warn' : 'ok') + ' show';
-    st.textContent = 'PDF gerado.' + (semHorario ? ' Gráfico, gases e hidratação NÃO desenhados: preencha início e término da anestesia.' : '');
+    const aviso = semHorario ? ' Gráfico, gases e hidratação NÃO desenhados: preencha início e término da anestesia.' : '';
+    let classe = semHorario ? 'warn' : 'ok', msg;
+    if (driveConfigurado() && fichaId) {
+      const item = { id: fichaId, data: d.data, arquivo, bytes, criado: Date.now() };
+      await filaPdfPut(item);
+      let r = null;
+      if (navigator.onLine) {
+        st.textContent = 'Enviando o PDF para o Google Drive...';
+        try { r = await enviarPdf(item, 30000); } catch (e) { console.warn(e); }
+      }
+      if (r) {
+        msg = `PDF salvo no Google Drive (pasta ${r.pasta}). <a href="${r.url}" target="_blank" rel="noopener">Abrir PDF</a>`;
+      } else {
+        await salvarArquivo(blob, arquivo);
+        classe = 'warn';
+        msg = 'Sem conexão com o Drive: PDF baixado neste aparelho e guardado na fila; será enviado ao Drive automaticamente.';
+      }
+      agendarSync(1500);
+    } else {
+      await salvarArquivo(blob, arquivo);
+      msg = 'PDF gerado.' + (driveConfigurado() ? '' : ' (Google Drive não configurado: arquivo só neste aparelho.)');
+    }
+    st.className = 'status ' + classe + ' show';
+    st.innerHTML = msg + aviso +
+      '<br><button type="button" class="btn secondary" style="margin-top:8px;" onclick="compartilharUltimo()">📤 Compartilhar PDF (WhatsApp etc.)</button>';
   } catch (err) {
     console.error(err);
     st.className = 'status err show'; st.textContent = 'Erro ao gerar PDF: ' + err.message;
@@ -1115,6 +1450,8 @@ limparFichasAntigas();
   const fi = id && lerFichas()[id];
   if (fi) { fichaId = id; estadoInicial(); aplicarSnapshot(fi); } else estadoInicial();
   renderFichas();
+  const cfg = lerCfg(); if (cfg.url) $('sync_url').value = cfg.url;
+  contarFila().catch(() => {}); renderSync(); agendarSync(1500);
   if (!storageOk()) {
     const s = $('fichasStatus'); s.className = 'status err show';
     s.textContent = 'Este navegador não está permitindo salvar dados para este arquivo — as fichas NÃO ficarão salvas. Veja a orientação sobre como abrir o app.';
