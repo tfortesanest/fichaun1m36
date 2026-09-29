@@ -1,6 +1,6 @@
 {
-  "name": "Ficha Anestésica Unimed-Rio",
-  "short_name": "Ficha Anestesia",
+  "name": "Fichas UNIMED",
+  "short_name": "Ficha UNIMED",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
