@@ -64,6 +64,10 @@
   .status.warn { background: #fff4e5; color: #8a5a00; }
   .status.err { background: #fce8e6; color: #a41c1c; }
   .hint { font-size: 0.78rem; color: #888; margin-top: 4px; }
+  .sugestoes { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .sugestoes:empty { display: none; }
+  .sugestoes button { border: 1px solid #b9cfe0; background: #f2f7fb; color: #1f5479; border-radius: 14px; padding: 5px 10px; font-size: 0.82rem; cursor: pointer; }
+  .sugestoes button small { color: #7a8b99; margin-left: 4px; }
 </style>
 </head>
 <body>
@@ -134,13 +138,13 @@
   </div>
   <div class="row">
     <label>Diagnóstico</label>
-    <input type="text" id="f_diagnostico" list="hist_diag" autocomplete="off">
-    <datalist id="hist_diag"></datalist>
+    <input type="text" id="f_diagnostico" autocomplete="off" oninput="renderHist('diag')">
+    <div id="sug_diag" class="sugestoes"></div>
   </div>
   <div class="row">
     <label>Cirurgia realizada</label>
-    <input type="text" id="f_cirurgia" list="hist_cir" autocomplete="off" onchange="cirurgiaMudou()">
-    <datalist id="hist_cir"></datalist>
+    <input type="text" id="f_cirurgia" autocomplete="off" onchange="cirurgiaMudou()" oninput="renderHist('cir')">
+    <div id="sug_cir" class="sugestoes"></div>
   </div>
   <div class="row">
     <label>Caráter</label>
@@ -239,10 +243,13 @@
     <div class="row">
       <label>Perfil de pressão arterial</label>
       <select id="f_pa_perfil" onchange="togglePerfilManual()">
-        <option value="normotenso">Normotenso</option>
+        <option value="normotenso">Normal</option>
         <option value="hipertenso">Hipertenso</option>
+        <option value="hipotenso">Hipotenso</option>
         <option value="manual">Personalizado</option>
       </select>
+      <button type="button" class="btn secondary" style="margin-top:6px;padding:8px;font-size:0.9rem;" onclick="novaCurva()">🎲 Sortear outra curva para esta ficha</button>
+      <div id="curvaStatus" class="hint"></div>
     </div>
     <div id="perfilManualOptions" style="display:none;">
       <div class="three-col">
@@ -413,14 +420,50 @@ function linhasRespParaColuna(i, total, tecnica) {
 const PERFIS_PA = {
   normotenso: { sys: [120, 90, 108], dia: [80, 55, 70], fc: [80, 60, 68] },
   hipertenso: { sys: [165, 125, 145], dia: [100, 75, 90], fc: [88, 65, 75] },
+  hipotenso:  { sys: [100, 78, 90],   dia: [60, 44, 52],  fc: [72, 58, 64] },
 };
+// Aleatoriedade da curva (sorteada uma vez por ficha e guardada em rand.hemo):
+// deslocamento dos 3 pontos-âncora (início, vale, platô) + ruído coluna a coluna.
+const HEMO_DESLOC = { sys: 8, dia: 5, fc: 7 };   // ± mmHg / bpm nos pontos-âncora
+const HEMO_RUIDO  = { sys: 4, dia: 3, fc: 3 };   // ± por coluna
+const HEMO_GAP_PLATO = { sys: 8, dia: 5, fc: 5 };  // platô sempre abaixo do início
+const HEMO_GAP_VALE  = { sys: 10, dia: 6, fc: 5 }; // vale sempre abaixo do platô
+function sortearHemo() {
+  const u = () => Math.round((Math.random() * 2 - 1) * 100) / 100;
+  const vet = n => Array.from({ length: n }, u);
+  return { ini: vet(3), vale: vet(3), plato: vet(3), tVale: 1 + Math.floor(Math.random() * 3), ruido: { sys: vet(30), dia: vet(30), fc: vet(30) } };
+}
+const HEMO_NEUTRO = { ini: [0, 0, 0], vale: [0, 0, 0], plato: [0, 0, 0], tVale: 2, ruido: { sys: [], dia: [], fc: [] } };
+function curvasHemo(perfil, h, total, manual) {
+  h = h || HEMO_NEUTRO;
+  const tVale = Math.max(0, Math.min(h.tVale ?? 2, total - 1));
+  const out = {};
+  ['sys', 'dia', 'fc'].forEach((k, ki) => {
+    let [ini, vale, plato] = perfil[k];
+    if (!manual) {
+      ini += (h.ini[ki] || 0) * HEMO_DESLOC[k];
+      vale += (h.vale[ki] || 0) * HEMO_DESLOC[k];
+      plato += (h.plato[ki] || 0) * HEMO_DESLOC[k];
+      plato = Math.min(plato, ini - HEMO_GAP_PLATO[k]);
+      vale = Math.min(vale, plato - HEMO_GAP_VALE[k]);
+    }
+    out[k] = curva(ini, vale, plato, total, tVale).map((v, i) => {
+      let r = (h.ruido[k][i] || 0) * HEMO_RUIDO[k];
+      if (i === 0) r = 0;                 // primeira medida = valor inicial (o mais alto)
+      if (i === tVale) r = Math.min(r, 0); // vale nunca "sobe" pelo ruído
+      return Math.round(v + r);
+    });
+  });
+  out.dia = out.dia.map((d, i) => Math.min(d, out.sys[i] - 25)); // diastólica coerente com a sistólica
+  return out;
+}
 function curva(ini, vale, plato, n, tVale) {
   const out = [];
   for (let i = 0; i < n; i++) {
     let v;
     if (i <= tVale) v = ini + (vale - ini) * (tVale > 0 ? i / tVale : 1);
     else { const f = (i - tVale) / Math.max(1, n - 1 - tVale); v = vale + (plato - vale) * (1 - Math.pow(1 - f, 2)); }
-    out.push(Math.round(v + Math.sin(i * 0.9)));
+    out.push(v);
   }
   return out;
 }
@@ -553,9 +596,8 @@ async function montarPdf(d, templateBytes, L) {
 
   if (d.grafico && total > 0) {
     // Curvas de PA/FC
-    const perfil = d.perfil === 'manual' ? d.perfilManual : PERFIS_PA[d.perfil];
-    const tVale = Math.min(2, total - 1);
-    const sys = curva(...perfil.sys, total, tVale), dia = curva(...perfil.dia, total, tVale), fc = curva(...perfil.fc, total, tVale);
+    const perfil = d.perfil === 'manual' ? d.perfilManual : (PERFIS_PA[d.perfil] || PERFIS_PA.normotenso);
+    const { sys, dia, fc } = curvasHemo(perfil, d.rand && d.rand.hemo, total, d.perfil === 'manual');
     for (let i = 0; i < total; i++) {
       const x = colCenter(i);
       const yS = valueToY(sys[i]), yD = valueToY(dia[i]), yF = valueToY(fc[i]);
@@ -802,12 +844,14 @@ async function buscarAgenda() {
       if (!salva) throw e;
       json = salva.json;
       agendaEventos = processarEventos(json);
+      registrarAgendaNaTela(data, json);
       renderAgenda();
       const t = new Date(salva.ts);
       statusAgenda('warn', `Sem conexão: usando a agenda salva em ${t.toLocaleDateString('pt-BR')} às ${t.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}. ${agendaEventos.length} procedimento(s).`);
       return;
     }
     agendaEventos = processarEventos(json);
+    registrarAgendaNaTela(data, json);
     renderAgenda();
     statusAgenda('ok', `${agendaEventos.length} procedimento(s) em ${data.split('-').reverse().join('/')}. Toque no paciente. Agenda guardada para uso sem internet.`);
   } catch (e) {
@@ -817,7 +861,9 @@ async function buscarAgenda() {
 }
 function carregarAgendaColada() {
   try {
-    agendaEventos = processarEventos(JSON.parse($('agendaJson').value));
+    const json = JSON.parse($('agendaJson').value);
+    agendaEventos = processarEventos(json);
+    registrarAgendaNaTela($('f_agenda_data').value, json);
     renderAgenda(); statusAgenda('ok', `${agendaEventos.length} procedimento(s) carregado(s).`);
   } catch (e) { statusAgenda('err', 'JSON inválido: ' + e.message); }
 }
@@ -933,21 +979,44 @@ const HIST = { diag: ['unimed_hist_diagnostico', 'f_diagnostico', 'hist_diag'], 
 function lerHist(chave) {
   try { return JSON.parse(localStorage.getItem(chave) || '{}') || {}; } catch (e) { return {}; }
 }
-function renderHist(tipo) {
-  const [chave, , listId] = HIST[tipo];
-  const h = lerHist(chave);
-  const itens = Object.values(h).sort((a, b) => b.n - a.n || b.t - a.t).slice(0, 40);
-  $(listId).innerHTML = itens.map(it => `<option value="${it.v.replace(/"/g, '&quot;')}">`).join('');
-}
-function salvarHist(tipo) {
+// Cada ficha conta 1 vez por valor (corrigir o texto move a contagem; ficha nenhuma = sai da lista).
+// Entradas antigas trazem uma contagem "n" herdada da versão anterior.
+const contagemHist = (e, semId) => (e.n || 0) + Object.keys(e.ids || {}).filter(id => id !== semId).length;
+let sugAtuais = { diag: [], cir: [] };
+function registrarHist(tipo) {
+  if (!fichaId) return;
   const [chave, inputId] = HIST[tipo];
-  const v = $(inputId).value.trim(); if (!v) return;
-  try {
-    const h = lerHist(chave), k = normalize(v);
-    h[k] = { v, n: (h[k]?.n || 0) + 1, t: Date.now() };
-    localStorage.setItem(chave, JSON.stringify(h));
-  } catch (e) { console.warn('Histórico não salvo', e); }
-  renderHist(tipo);
+  const v = $(inputId).value.trim(), kv = normalize(v);
+  const h = lerHist(chave); let mudou = false;
+  Object.keys(h).forEach(k => {
+    const e = h[k];
+    if (k !== kv && e.ids && e.ids[fichaId]) { delete e.ids[fichaId]; mudou = true; if (!contagemHist(e)) delete h[k]; }
+  });
+  if (v && !(h[kv] && h[kv].ids && h[kv].ids[fichaId])) {
+    h[kv] = h[kv] || { v, n: 0 }; h[kv].ids = h[kv].ids || {};
+    h[kv].ids[fichaId] = Date.now(); h[kv].v = v; h[kv].t = Date.now(); mudou = true;
+  }
+  if (mudou) { try { localStorage.setItem(chave, JSON.stringify(h)); } catch (e) {} }
+}
+function renderHist(tipo) {
+  const [chave, inputId] = HIST[tipo];
+  const div = $('sug_' + tipo); if (!div) return;
+  const q = normalize($(inputId).value.trim());
+  const itens = Object.entries(lerHist(chave))
+    .map(([k, e]) => ({ k, v: e.v, c: contagemHist(e, fichaId), t: e.t || 0 }))
+    .filter(it => it.c > 0 && it.k !== q && (!q || it.k.includes(q)))
+    .sort((a, b) => b.c - a.c || b.t - a.t)
+    .slice(0, 8);
+  sugAtuais[tipo] = itens;
+  const esc = x => String(x).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  div.innerHTML = itens.map((it, i) => `<button type="button" onclick="escolherSugestao('${tipo}', ${i})">${esc(it.v)}<small>${it.c}×</small></button>`).join('');
+}
+function escolherSugestao(tipo, i) {
+  const it = sugAtuais[tipo][i]; if (!it) return;
+  const el = $(HIST[tipo][1]);
+  el.value = it.v;
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  el.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
 
@@ -982,6 +1051,7 @@ function aplicarSnapshot(s) {
   toggleGraficoOptions(); togglePerfilManual();
   ultimoCPRE = ehCPRE();
   restaurando = false;
+  renderHist('diag'); renderHist('cir');
 }
 function salvarFichaAtual(extra = {}) {
   if (restaurando || !storageOk()) return;
@@ -993,6 +1063,7 @@ function salvarFichaAtual(extra = {}) {
   f[fichaId] = Object.assign(antiga, snap, extra, { id: fichaId, atualizado: Date.now() });
   gravarFichas(f);
   marcarPendente(fichaId, f[fichaId].atualizado);
+  registrarHist('diag'); registrarHist('cir');
   if (!('pdf' in extra) && !('rand' in extra) && ultimoPdf) { ultimoPdf = null; fecharShareBar(); } // ficha alterada: PDF em memória desatualizado
   try { localStorage.setItem(K_ATUAL, fichaId); } catch (e) {}
   renderFichas();
@@ -1032,6 +1103,7 @@ function estadoInicial() {
   toggleTecnica(); toggleGraficoOptions(); togglePerfilManual(); sortearSinaisAlta();
   ultimoCPRE = false;
   restaurando = false;
+  renderHist('diag'); renderHist('cir');
 }
 function novaFicha() { salvarFichaAtual(); fichaId = null; ultimoPdf = null; fecharShareBar(); try { localStorage.removeItem(K_ATUAL); } catch (e) {} estadoInicial(); renderFichas(); window.scrollTo(0, 0); }
 function abrirFicha(id) {
@@ -1098,7 +1170,7 @@ function hojeISO() {
 function coletarDados() {
   const v = id => ($(id).value || '').trim();
   const num = (id, def) => { const x = parseFloat($(id).value); return isNaN(x) ? def : x; };
-  const rand = { spo2: [], etco2: [] };
+  const rand = { spo2: [], etco2: [], hemo: sortearHemo() };
   for (let k = 0; k < 13; k++) { rand.spo2.push(rnd(97, 99)); rand.etco2.push(rnd(32, 37)); }
   return {
     nome: v('f_nome'), nasc: normalizarData(v('f_nasc')), data: v('f_data'),
@@ -1303,6 +1375,22 @@ async function salvarCfgDrive() {
   sincronizar(true);
 }
 
+// Última agenda carregada: continua na tela até uma nova busca
+const K_AGENDA_TELA = 'unimed_agenda_tela';
+function registrarAgendaNaTela(data, json) {
+  try { localStorage.setItem(K_AGENDA_TELA, JSON.stringify({ data, json, ts: Date.now() })); } catch (e) {}
+}
+function restaurarAgendaNaTela() {
+  let a = null; try { a = JSON.parse(localStorage.getItem(K_AGENDA_TELA) || 'null'); } catch (e) {}
+  if (!a || !a.json) return false;
+  try { agendaEventos = processarEventos(a.json); } catch (e) { return false; }
+  $('f_agenda_data').value = a.data || hojeISO();
+  renderAgenda();
+  const t = new Date(a.ts), dia = (a.data || '').split('-').reverse().join('/');
+  statusAgenda('ok', `Agenda de ${dia} (buscada em ${t.toLocaleDateString('pt-BR')} às ${t.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}): ${agendaEventos.length} procedimento(s). Faça nova busca para atualizar.`);
+  return true;
+}
+
 // Agenda guardada para uso sem internet (últimas 10 datas)
 function lerAgendaCache() { try { return JSON.parse(localStorage.getItem(K_AGENDA) || '{}') || {}; } catch (e) { return {}; } }
 function guardarAgenda(data, json) {
@@ -1333,6 +1421,15 @@ function base64ToBytes(b64) {
   return bytes;
 }
 
+function novaCurva() {
+  const f = lerFichas(), fi = fichaId && f[fichaId];
+  if (!fi || !fi.rand) { $('curvaStatus').textContent = 'A curva é sorteada ao gerar o PDF desta ficha.'; return; }
+  fi.rand = Object.assign({}, fi.rand, { hemo: sortearHemo() }); gravarFichas(f);
+  ultimoPdf = null; fecharShareBar();
+  salvarFichaAtual({ rand: fi.rand });
+  $('curvaStatus').textContent = 'Nova curva sorteada. Gere o PDF de novo para aplicar.';
+}
+
 // ---------- Compartilhar (menu do Android: WhatsApp, e-mail...) ----------
 let ultimoPdf = null; // { id, arquivo, bytes } — último PDF montado nesta sessão
 
@@ -1344,7 +1441,7 @@ function nomeArquivo(d) {
 function dadosParaPdf() {
   const d = coletarDados();
   const fi = fichaId && lerFichas()[fichaId];
-  if (fi && fi.rand && fi.rand.spo2 && fi.rand.etco2) d.rand = fi.rand;
+  if (fi && fi.rand && fi.rand.spo2 && fi.rand.etco2) d.rand = Object.assign({}, d.rand, fi.rand, { hemo: fi.rand.hemo || d.rand.hemo });
   return d;
 }
 async function compartilharPdf(bytes, arquivo) {
@@ -1380,7 +1477,7 @@ async function compartilharFicha(id) {
     const d = dadosParaPdf();
     const bytes = await montarPdf(d, base64ToBytes(TEMPLATE_B64), PDFLib);
     const fi = lerFichas()[id];
-    if (fi && !fi.rand) salvarFichaAtual({ rand: d.rand });
+    if (fi && (!fi.rand || !fi.rand.hemo)) salvarFichaAtual({ rand: d.rand });
     ultimoPdf = { id, arquivo: nomeArquivo(d), bytes };
     st.className = 'status'; st.textContent = '';
     mostrarShareBar(ultimoPdf.arquivo);
@@ -1396,7 +1493,7 @@ async function generatePdf() {
   try {
     const d = dadosParaPdf();
     const bytes = await montarPdf(d, base64ToBytes(TEMPLATE_B64), PDFLib);
-    salvarHist('diag'); salvarHist('cir'); salvarParProcDiag();
+    salvarParProcDiag();
     salvarFichaAtual({ pdf: Date.now(), rand: d.rand });
     const arquivo = nomeArquivo(d);
     ultimoPdf = { id: fichaId, arquivo, bytes };
@@ -1443,6 +1540,7 @@ if ('serviceWorker' in navigator) {
 // ---------- Estado inicial ----------
 $('f_agenda_data').value = hojeISO();
 if (!agendaToken()) $('tokenRow').style.display = '';
+restaurarAgendaNaTela();
 renderHist('diag'); renderHist('cir');
 limparFichasAntigas();
 (function () {
